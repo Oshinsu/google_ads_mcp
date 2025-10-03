@@ -1,56 +1,39 @@
-# Copyright 2025 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-"""The server for the Google Ads API MCP."""
-import asyncio
 import os
-
+import asyncio
 from ads_mcp.coordinator import mcp_server
 from ads_mcp.scripts.generate_views import update_views_yaml
-from ads_mcp.tools import api
-from ads_mcp.tools import docs
-
+from ads_mcp.tools import api, docs
 import dotenv
-from fastmcp.server.auth.providers.google import GoogleProvider
-from fastmcp.server.auth.providers.google import GoogleTokenVerifier
-
-
 dotenv.load_dotenv()
-
 
 tools = [api, docs]
 
-if os.getenv("USE_GOOGLE_OAUTH_ACCESS_TOKEN"):
-  mcp_server.auth = GoogleTokenVerifier()
-
-if os.getenv("FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_ID") and os.getenv(
-    "FASTMCP_SERVER_AUTH_GOOGLE_CLIENT_SECRET"
-):
-  base_url = os.getenv("FASTMCP_SERVER_BASE_URL", "http://localhost:8000")
-  mcp_server.auth = GoogleProvider(
-      base_url=base_url,
-      required_scopes=["https://www.googleapis.com/auth/adwords"],
-  )
-
+def _ensure_google_ads_yaml_from_env():
+    yaml_inline = os.getenv("GOOGLE_ADS_YAML")
+    path_env = os.getenv("GOOGLE_ADS_CREDENTIALS")
+    if yaml_inline and not path_env:
+        path = "/tmp/google-ads.yaml"
+        with open(path, "w") as f:
+            f.write(yaml_inline)
+        os.environ["GOOGLE_ADS_CREDENTIALS"] = path
 
 def main():
-  """Initializes and runs the MCP server."""
-  asyncio.run(update_views_yaml())  # Check and update docs resource
-  api.get_ads_client()  # Check Google Ads credentials
-  print("mcp server starting...")
-  mcp_server.run(transport="streamable-http")  # Initialize and run the server
+    _ensure_google_ads_yaml_from_env()
+    asyncio.run(update_views_yaml())
+    api.get_ads_client()
 
+    transport = os.getenv("MCP_TRANSPORT", "stdio")
+    if os.getenv("PORT") and transport == "stdio":
+        transport = "sse"
+
+    print(f"mcp server starting... transport={transport}")
+
+    if transport == "sse":
+        port = int(os.getenv("PORT", "8000"))
+        host = os.getenv("HOST", "0.0.0.0")
+        mcp_server.run(transport="sse", host=host, port=port)
+    else:
+        mcp_server.run(transport="stdio")
 
 if __name__ == "__main__":
-  main()
+    main()
